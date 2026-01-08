@@ -102,6 +102,6 @@ This project was conducted as an exploratory analysis. Findings should be interp
 
 **Full exploratory analysis:**
 
-[View the rendered HTML report](eda.html)
+[View the rendered HTML report](https://lemphane.github.io/ride-hailing-behavior-eda/eda.html)
 
 *(Includes all data cleaning steps, visualizaitons, and discussion)
