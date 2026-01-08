@@ -1,0 +1,233 @@
+---
+title: "Do Uber users exploit the Uber booking system to optimize fares?"
+author: "Tlali Lemphane"
+date: "`r format(as.Date('2026-01-08'), '%d %B %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 1. Project Overview
+Ride hailing platforms like Uber rely heavily on algorithmic pricing, dynamic demand matching, and user behavior to operate efficiently. While much attention is given to how these platforms optimize profits, far less scrutiny is placed on the users themselves, specifically, whether riders strategically exploit the booking system to minimize fares.
+
+This project investigates the question: *Do Uber users exploit the booking system to optimize fares?*
+
+
+# 2. Dataset
+Using a real world ride sharing [dataset](https://www.kaggle.com/datasets/yashdevladdha/uber-ride-analytics-dashboard) from Uber operations for the year 2024, this exploratory data analysis examines patterns in booking behavior, cancellations, rebookings, trip timing, and fare outcomes. The goal is to uncover whether users appear to game the system, intentionally or unintentionally, by leveraging surge pricing windows, repeated cancellations, short distance probing, or strategic booking times.
+
+# 3. Process
+This section will focus on inspecting the data and identifying key insights
+
+To have a nice overview, here's a small checklist of goals
+
+- Load libraries and files
+
+- If any, deal with: missing values, duplication, datatypes, date format
+
+- Merge/create necessary columns and dataframe
+
+```{r echo=TRUE}
+library(readr)
+rideBookings = read_csv("ncr_ride_bookings.csv", na = c("null", "NULL", "NA")) #Handle null values
+rideBookings$`Booking ID` = trimws(rideBookings$`Booking ID`, whitespace = '"')
+rideBookings$`Customer ID`= gsub('"', '', rideBookings$`Customer ID`)
+```
+
+Several numeric fields were initially imported as characters due to missing values encoded as the string "null". These were explicitly converted to NA prior to analysis. Also, identifier fields contained extraneous quotation marks due to csv encoding. These were removed prior to duplicate detection and grouping to ensure consistent identifiers.
+
+**3.1 Data Inspection**
+```{r echo=TRUE}
+#Check datatypes
+str(rideBookings)
+```
+
+```{r echo=TRUE}
+#Check duplicates
+sum(duplicated(rideBookings)) #no duplicate records
+sum(duplicated(rideBookings$`Booking ID`)) 
+sum(duplicated(rideBookings$`Customer ID`)) 
+sum(duplicated(rideBookings[,c(1,5)])) #same customer on same day
+sum(duplicated(rideBookings[,c(1,5, 7)])) #same customer on same day, at same pickup location
+```
+
+Given the low rate of repeat customer IDs in the dataset, systematic long term exploitation by loyal users could not be studied directly.
+
+
+**3.2 Split the data**
+```{r}
+comp_rides = as.data.frame(rideBookings[which(rideBookings$`Booking Status` == "Completed"),])
+incomp_rides = as.data.frame(rideBookings[which(rideBookings$`Booking Status` != "Completed"),])
+```
+
+**3.4 Completed Ride Data Exploration**
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+```
+
+```{r echo=TRUE}
+#How do the completed rides look month by month?
+  #Create month variable
+comp_rides = comp_rides %>% mutate(Month = floor_date(Date, "month"))
+  #count completed rides per month
+monthly_counts = comp_rides %>% count(Month)
+print(monthly_counts)
+
+  #plot bar chart
+ggplot(monthly_counts, aes(x = Month, y = n)) + geom_col(colour="black") + labs(title = "Number of comlpeted rides per Month", x = "Month", y="Completed Rides") + scale_x_date(date_labels = "%b %Y") + theme_minimal()
+```
+
+Given the observed stability of the successful rides throughout the year, one might infer that there might be a user loyalty at play, however, that alone is not a strong enough explanation, especially since we cannot study it directly. So instead, we shall investigate behavior proxies.
+
+**3.4.1 Pickup time vs month (temporal behavior)**
+```{r}
+hour_month_counts = comp_rides %>% count(Month, Time)
+#head(hour_month_counts)
+ggplot(hour_month_counts, aes(x = Time, y = n)) + geom_line(color="steelblue") + facet_wrap(~ Month, ncol=2) + labs(title = "Pickup Time Patterns Across Months", x="Hour of Day", y="Number of completed rides") + theme_minimal()
+```
+
+Summary:
+
+- Similar shapes across moths indicate habitual behavior.
+
+- High usage and daily peaks around 07:00 - 10:00 and 19:00 - 21:00 are in line with commuter behavior.
+
+**3.4.2 Ride cost vs distance (price sensitivity and short distance probing)**
+
+Due to extreme overplotting driven by high frequency, short distane trips, aggregate and derived metrics were preferred over a raw scatterplot to reveal underlying structure.
+
+```{r}
+rides = comp_rides %>% filter(!is.na(`Ride Distance`), !is.na(`Booking Value`), `Ride Distance` > 0, `Booking Value` > 0)
+rides = rides %>% mutate(dist_bin = ntile(`Ride Distance`,20)) #20 bins.. 
+binned_cost = rides %>% group_by(dist_bin) %>% summarize(avg_distance = mean(`Ride Distance`), avg_cost = mean(`Booking Value`), num_rides = n(), .groups = "drop")
+
+ggplot(binned_cost, aes(x=avg_distance, y=avg_cost)) + geom_col() + labs(title = "Average Ride Cost by Distance(Binned)", x="Average Distance per Bin", y="Average Ride Cost") + theme_minimal()
+```
+
+Summary: 
+
+- Users seem to tolerate high "per km" prices for short trips
+
+- Demand remains stable
+
+- No visible avoidance behavior, which suggest low elasticity (price sensitivity)
+
+- Distance is not a primary factor in ride pricing, perhaps it is dominated by fixed (base prices) and time based components
+
+**3.4.3 Cost per km vs hour of day **
+
+```{r}
+hourly_cost_km = comp_rides %>% filter(!is.na(`Ride Distance`), !is.na(`Booking Value`), `Ride Distance` > 0, `Booking Value` > 0) %>% mutate(cost_per_km = `Booking Value` / `Ride Distance`, Hour = hour(Time))
+#Aggregate by Hour
+hourly_summary = hourly_cost_km %>% group_by(Hour) %>% summarise(avg_cost_per_km = mean(cost_per_km), rides = n(), .groups = "drop")
+
+ggplot(hourly_summary, aes(x = Hour, y = avg_cost_per_km)) + geom_line() + labs(title = "Average Cost per km by Hour of day", x="Hour of Day", y="Average cost per km") + theme_minimal()
+```
+
+Summary:
+
+Distinct cost per kilometer peaks during morning and evening periods suggest sustained pricing pressure rather than isolated surge events. while gradual declines following peak periods are consistent with some deferral of discretionary travel, overall demand remains high, indicating that time constrained users prioritize reliability over fare optimization.
+
+- The broad morning peaks suggest sustained pricing pressure rather than isolated surge events.
+
+- Mild surge just after midday suggests choice based demand (lunch travel, errands, etc), but not commute necessity, hinting at users prioritizing convenience over cost.
+
+- Price surge during late afternoon suggests more time constrained travel (school pickups, shift workers, etc)
+
+- Late night peak, which can be attributed to fewer drivers and higher willingness to pay due to reduced public transport availability and safety considerations strongly support that users prioritze reliability and safety over cost.
+
+
+
+**3.4.4 Payment method **
+```{r}
+payment_dist = comp_rides %>% filter(!is.na(`Payment Method`)) %>% count(`Payment Method`) %>% mutate(prop = n / sum(n))
+
+ggplot(payment_dist, aes(x=`Payment Method`, y=n)) + geom_col() + labs(title = "Distribution of Payment Methods", x="Payment Method", y="Number of rides") + theme_minimal()
+```
+
+**3.4.5 Payment method vs Cost per km**
+```{r}
+payment_cost_km = comp_rides %>% filter(!is.na(`Payment Method`), !is.na(`Ride Distance`), !is.na(`Booking Value`), `Ride Distance` > 0, `Booking Value` > 0) %>% mutate(cost_per_km = `Booking Value` / `Ride Distance`) %>% group_by(`Payment Method`) %>% summarise(avg_cost_per_km = mean(cost_per_km), rides = n(), .groups = "drop")
+
+ggplot(payment_cost_km, aes(x=`Payment Method`, y=avg_cost_per_km)) + geom_col() + labs(title = "Average Cost per km by Payment Method", x="Payment Method", y="Average Cost per km") + theme_minimal()
+```
+Summary: 
+
+- No financial advantage to "thinking in cash".
+
+- Payment option is habitual, not strategic.
+
+- Little evidence of fare optimization via payment switching.
+
+
+**3.5 Incomplete Ride Data Exploration**
+
+From the analysis of the completed rides, we have an idea that users aren't "gaming" Uber, but they're using it as a convenience tool, so now we are going to try and figure out whether the data suggests that cancellations are situational or strategic.
+
+**3.5.1 Classify unsuccessful Rides**
+```{r}
+rides = as.data.frame(table(incomp_rides$`Booking Status`))
+head(rides)
+ggplot(rides, aes(x=Var1, y=Freq)) + geom_col() + labs(title = "Unsuccesful Ride Categories", x="Category", y="Number of rides") + theme_minimal()
+```
+
+**3.5.2 Classify Customer Cancelled Rides**
+
+Despite the overwhelming majority of cancellations being by drivers, I still think it's important to visualize the reasons for customer cancellations in order to gain a overview of their reasons.
+
+```{r}
+cust_cancellations = as.data.frame(incomp_rides[which(incomp_rides$`Booking Status` == "Cancelled by Customer"),])
+cancels = as.data.frame(table(cust_cancellations$`Reason for cancelling by Customer`))
+
+ggplot(cancels, aes(x=Var1, y=Freq)) + geom_col() + labs(title = "Reasons for Customer Cancellations", x="Reasons", y="Number of rides") + theme_minimal()
+```
+
+Summary:
+
+- Plots of cancelled rides show no apparent strategic price optimization behavior given low customer cancellations and seemingly balanced and reasonable reasons for cancellations.
+
+# Dataset Limitations
+
+This analysis is subject to several important limitations that restrict the scope and strength of the conclusions drawn.
+
+First, the dataset represents ride activity from *New Delhi only*, and therefore cannot be assumed to reflect Uber user behavior in other cities, regions or countries. Factors such as traffic patterns, income distribution and local pricing dynamics may differ substantially elsewhere.
+
+Second, while the dataset contains customer and driver identifiers, these appear to be randomized or anonymized in a way that prevents reliable tracking of individual users across multiple bookings. As a result, it is not possible to study long term or repeated customer behavior, identify habitual cancellation patters, or distinguish between frequent and infrequent users.
+
+Relatedly, the dataset does not allow for a clear determination of the number of unique users, nor does it support segmentation by user tenure or usage intensity. This limits the ability to attribute observed behaviors to specific user strategies rather than aggregate system level effects.
+
+Additionally, several fields, particularly those describing cancellation reasons, seem to either be self reported or system recorded at a high level, which may obscure nuanced motivations behind ride cancellations. For example, a cancellation labelled as "driver unavailable" may mask underlying supple shortages, price sensitivity(driver side), or time based demand spikes.
+
+Finally, the dataset provides no direct insight into dynamic fare changes over time, such as price fluctuations between successive booking attempts. This restricts the analysis to infered behavior rather than direct observation of fare optimizatin strategies.
+
+# Conclusion
+
+The objective of this exploratory data analysis was to investigate whether Uber users exploit the booking system to optimize fares through means such as repeated cancellations or strategic booking behavior.
+
+Based on the available data, there is **no strong evidence** to suggest systematic or widespread fare exploitation by users. Completed ride patterns show consistency across payment options and booking outcomes, while canellation behavior appears to be closely associated with *operational and contextual factors*, such as driver availability and trip execution issues, rather than deliberate user manipulation.
+
+However, due to limitations in user level tracking and fare progression visibility, this analysis cannot definitely rule out individual instances of strategic behavior. What can be concluded is that, at the aggregate level represented in this dataset, **user behavior is better explained by reliability and availability considerations than by systematic fare optimization strategies.**
+
+In this sense, the findings suggest that Uber's pricing and booking mechanisms, at least within this context, are sufficiently robust to discourage large scale exploitation by users.
+
+# Recommendations for improving the dataset
+
+- First, the inclusion of **persistent but anonymized user identifiers** would allow for longitudinal analysis of individual behavior while preserving privacy. This would make it possible to identify repeated cancellation patterns, user learning effects, and potential strategic behavior over time.
+
+- Second, providing **fare quotes for each booking attempt**, including charges between successive attempts, would allow direct measurement of whether users cancel rides in response to unfavorable pricing and rebook to obtain lower fees.
+
+- Additionally, **metatadata describing driver supply levels, surge pricing indicators and local demand conditions** would help disengage user behavior from platform side dynamics.
+
+- Finally, expanding the dataset to include **multiple cities or regions** would allow for comparative analysis and improve the generalizability of findings across different urban contexts.
+
+Collectively, these improvements would enable a more definitive assesment of whether fare optimization behavior exists and whether it is an exception or a systematic pattern.
+
+
+
+
+
