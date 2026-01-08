@@ -74,8 +74,11 @@ A detailed discussion is provided in the compiled EDA report.
 ## Repository Structure
 
 ├──  ncr_ride_bookings.csv
+
 ├── eda.Rmd
+
 ├── eda.html
+
 └── README.md
 
 ---
