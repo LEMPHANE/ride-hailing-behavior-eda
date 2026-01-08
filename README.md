@@ -99,3 +99,9 @@ At the aggregate level represented in this dataset, Uber users appear to engage 
 ## Notes
 
 This project was conducted as an exploratory analysis. Findings should be interpreted in light of dataset limitations and are not intended to generalize beyond the observed context.
+
+**Full exploratory analysis:**
+
+[View the rendered HTML report](eda.html)
+
+*(Includes all data cleaning steps, visualizaitons, and discussion)
